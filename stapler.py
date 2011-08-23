@@ -36,35 +36,27 @@ def _parse_config(f):
 
     return routes
 
-class Item(object):
-    def __init__(self, attrs, body):
-        self.attrs = attrs
-        self.body = body
-
-    def __str__(self):
-        return str(self.body)
-
-    def __unicode__(self):
-        return unicode(self.body)
-
-    @classmethod
-    def from_string(cls, s):
-        m = SEPORATOR_RE.match(s)
+def _item_from_string(s):
+    m = SEPORATOR_RE.match(s)
+    if not m:
+        # No attributes.
+        attrs = ''
+        body = s
+    else:
+        rest = s[m.end():]
+        m = SEPORATOR_RE.search(rest)
         if not m:
-            # No attributes.
-            attrs = ''
-            body = s
+            # No body.
+            attrs = rest
+            body = ''
         else:
-            rest = s[m.end():]
-            m = SEPORATOR_RE.search(rest)
-            if not m:
-                # No body.
-                attrs = rest
-                body = ''
-            else:
-                attrs = rest[:m.start()]
-                body = rest[m.end():]
-        return cls(yaml.load(attrs) or {}, body)
+            attrs = rest[:m.start()]
+            body = rest[m.end():]
+
+    attrs = yaml.load(attrs) or {}
+    assert isinstance(attrs, dict)
+    attrs['body'] = body
+    return attrs
 
 class FSSource(object):
     def __init__(self, path):
@@ -79,7 +71,7 @@ class FSSource(object):
                 filepath = os.path.join(dirpath, filename)
                 with open(filepath) as f:
                     content = f.read()
-                yield Item.from_string(content)
+                yield _item_from_string(content)
 
     def __iter__(self):
         return self._items()
@@ -103,6 +95,9 @@ class Site(object):
     def render(self):
         if not os.path.isdir(self.outdir):
             os.mkdir(self.outdir)
+
+        items = list(self.source)
+        self.env.globals['items'] = items
 
         for route in self.routes:
             tmpl = self.env.get_template(route.template)
