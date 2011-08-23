@@ -58,6 +58,12 @@ def _item_from_string(s):
     attrs['body'] = body
     return attrs
 
+def _run_fragment(env, text):
+    tmpl = env.from_string(text)
+    ctx = tmpl.new_context()
+    list(tmpl.root_render_func(ctx))
+    return ctx.get_exported()
+
 class FSSource(object):
     def __init__(self, path):
         self.path = path
@@ -68,10 +74,14 @@ class FSSource(object):
             for filename in filenames:
                 if filename.startswith('.'):
                     continue
+                slug, _ = os.path.splitext(filename)
+
                 filepath = os.path.join(dirpath, filename)
                 with open(filepath) as f:
                     content = f.read()
-                yield _item_from_string(content)
+                item = _item_from_string(content)
+                item['slug'] = slug
+                yield item
 
     def __iter__(self):
         return self._items()
@@ -90,16 +100,33 @@ class Site(object):
         self.env = jinja2.sandbox.SandboxedEnvironment(
             loader=jinja2.FileSystemLoader(tmpldir)
         )
+        self.fragment_env = jinja2.sandbox.SandboxedEnvironment(
+            line_statement_prefix = '', # Every line is a statement.
+        )
         self.source = FSSource(contentdir)
+
+    def _slug(self, value):
+        for item in self.items:
+            if item['slug'] == value:
+                return item
+        return self.env.undefined(value)
 
     def render(self):
         if not os.path.isdir(self.outdir):
             os.mkdir(self.outdir)
 
-        items = list(self.source)
-        self.env.globals['items'] = items
+        self.items = list(self.source)
+        mapping = {
+            'items': self.items,
+            'slug': self._slug,
+        }
+        self.env.globals.update(mapping)
+        self.fragment_env.globals.update(mapping)
 
         for route in self.routes:
+            fragment = ''.join(route.block)
+            exported = _run_fragment(self.fragment_env, fragment)
+
             tmpl = self.env.get_template(route.template)
             path = route.path
             if path.endswith('/'):
@@ -110,7 +137,7 @@ class Site(object):
             print self.outdir, path, outfn
 
             with open(outfn, 'w') as f:
-                for block in tmpl.generate():
+                for block in tmpl.generate(**exported):
                     f.write(block)
 
 if __name__ == '__main__':
